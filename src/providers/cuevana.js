@@ -200,4 +200,51 @@ async function getStreams(id) {
   return loadStreamSources(pageUrl);
 }
 
-module.exports = { getCatalog, search, getMeta, getStreams, PREFIX, CATALOGS };
+function normalize(str) {
+  return (str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+async function findBestMatch(title, wantType) {
+  const results = await search(title);
+  const target = normalize(title);
+  let best = null;
+  let bestScore = -1;
+  for (const r of results) {
+    if (wantType && r.type !== wantType) continue;
+    const n = normalize(r.name);
+    const score = n === target ? 2 : n.includes(target) || target.includes(n) ? 1 : 0;
+    if (score > bestScore) {
+      bestScore = score;
+      best = r;
+    }
+  }
+  return best || results.find((r) => !wantType || r.type === wantType) || null;
+}
+
+/**
+ * Punto de entrada para el addon "sin catálogo propio": recibe el título
+ * (resuelto vía TMDB a partir del id de IMDb) y devuelve los streams,
+ * sin que este provider necesite tener su propio catálogo/paginado.
+ */
+async function getStreamsByTitle(title, { type, season, episode } = {}) {
+  const wantType = type === 'series' ? 'series' : 'movie';
+  const match = await findBestMatch(title, wantType);
+  if (!match) return [];
+
+  if (wantType === 'series' && season && episode) {
+    const meta = await getMeta(match.id);
+    const video = meta.videos?.find((v) => v.season === season && v.episode === episode);
+    if (!video) return [];
+    return loadStreamSources(video._url);
+  }
+
+  const pageUrl = fromId(match.id);
+  return loadStreamSources(pageUrl);
+}
+
+module.exports = { getCatalog, search, getMeta, getStreams, getStreamsByTitle, PREFIX, CATALOGS };
