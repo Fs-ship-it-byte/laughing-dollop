@@ -148,7 +148,15 @@ async function loadStreamSources(pageUrl) {
       }
 
       if (data.type === 'mp4') {
-        return [{ name: 'SoloLatino', title: 'Directo MP4', url: data.url, referer: pageUrl }];
+        return [
+          {
+            name: 'SoloLatino',
+            title: 'Directo MP4',
+            url: data.url,
+            type: 'mp4',
+            headers: { Referer: pageUrl },
+          },
+        ];
       }
       if (data.url.startsWith('https://embed69.org/')) {
         const streams = await loadEmbed69(data.url, pageUrl);
@@ -157,7 +165,8 @@ async function loadStreamSources(pageUrl) {
           name: 'SoloLatino',
           title: `${s.language} - ${s.type.toUpperCase()}`,
           url: s.url,
-          referer: s.referer,
+          type: s.type,
+          headers: s.headers,
           behaviorHints: { notWebReady: s.type === 'hls' },
         }));
       }
@@ -175,7 +184,8 @@ async function loadStreamSources(pageUrl) {
             name: 'SoloLatino',
             title: r.value.type.toUpperCase(),
             url: r.value.url,
-            referer: r.value.referer,
+            type: r.value.type,
+            headers: r.value.headers,
             behaviorHints: { notWebReady: r.value.type === 'hls' },
           }));
       }
@@ -197,7 +207,8 @@ async function loadStreamSources(pageUrl) {
           name: 'SoloLatino',
           title: resolved.type.toUpperCase(),
           url: resolved.url,
-          referer: resolved.referer,
+          type: resolved.type,
+          headers: resolved.headers,
           behaviorHints: { notWebReady: resolved.type === 'hls' },
         },
       ];
