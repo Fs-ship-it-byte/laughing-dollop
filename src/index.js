@@ -1,83 +1,69 @@
-const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
+const express = require('express');
+const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const cuevana = require('./providers/cuevana');
 const sololatino = require('./providers/sololatino');
+const tmdb = require('./tmdb');
+const { buildProxyUrl, proxyHandler } = require('./proxy');
 
-const PROVIDERS = {
-  [cuevana.PREFIX]: cuevana,
-  [sololatino.PREFIX]: sololatino,
-};
+const PROVIDERS = [cuevana, sololatino];
 
-function providerForId(id) {
-  const prefix = id.split(':')[0];
-  return PROVIDERS[prefix];
-}
-
+// Sin catálogo propio: el addon solo resuelve "stream" para ids de IMDb
+// (tt1234567 para películas, tt1234567:temporada:episodio para series) que
+// llegan porque el usuario ya tiene Cinemeta (u otro addon de catálogo)
+// instalado. No aparece ninguna estantería/catálogo propio en Nuvio/Stremio.
 const manifest = {
   id: 'community.storm.multi',
-  version: '0.2.0',
+  version: '0.3.0',
   name: 'Storm CS3 (Cuevana + SoloLatino)',
   description:
-    'Addon no oficial portado desde providers de CloudStream3 (storm-ext). Contenido en español.',
+    'Streams en español desde Cuevana y SoloLatino, resueltos vía TMDB a partir del id de IMDb. No trae catálogo propio: úsalo junto con Cinemeta u otro addon de catálogo.',
   logo: 'https://sololatino.net/favicon.ico',
-  resources: ['catalog', 'meta', 'stream'],
+  resources: ['stream'],
   types: ['movie', 'series'],
-  catalogs: [
-    { type: 'movie', id: 'peliculas', name: 'Cuevana - Películas', _provider: cuevana.PREFIX },
-    { type: 'movie', id: 'peliculas-estrenos', name: 'Cuevana - Estrenos', _provider: cuevana.PREFIX },
-    { type: 'series', id: 'series', name: 'Cuevana - Series', _provider: cuevana.PREFIX },
-    { type: 'series', id: 'series-estrenos', name: 'Cuevana - Series Estrenos', _provider: cuevana.PREFIX },
-    { type: 'movie', id: 'sl-peliculas', name: 'SoloLatino - Películas', _provider: sololatino.PREFIX, _remoteId: 'peliculas' },
-    { type: 'series', id: 'sl-series', name: 'SoloLatino - Series', _provider: sololatino.PREFIX, _remoteId: 'series' },
-    { type: 'series', id: 'sl-animes', name: 'SoloLatino - Animes', _provider: sololatino.PREFIX, _remoteId: 'animes' },
-    { type: 'movie', id: 'sl-cartoons', name: 'SoloLatino - Cartoons', _provider: sololatino.PREFIX, _remoteId: 'cartoons' },
-  ].map((c) => ({ ...c, extra: [{ name: 'search' }, { name: 'skip' }] })),
-  idPrefixes: [cuevana.PREFIX, sololatino.PREFIX],
+  catalogs: [],
+  idPrefixes: ['tt'],
 };
-
-// Mapa rápido id de catálogo (namespaced) -> { provider, remoteId }
-const CATALOG_MAP = Object.fromEntries(
-  manifest.catalogs.map((c) => [c.id, { provider: c._provider, remoteId: c._remoteId || c.id }])
-);
 
 const builder = new addonBuilder(manifest);
 
-builder.defineCatalogHandler(async ({ type, id, extra }) => {
+builder.defineStreamHandler(async ({ type, id }) => {
   try {
-    const entry = CATALOG_MAP[id];
-    if (!entry) return { metas: [] };
-    const provider = PROVIDERS[entry.provider];
+    const [imdbId, seasonStr, episodeStr] = id.split(':');
+    const season = seasonStr ? parseInt(seasonStr, 10) : undefined;
+    const episode = episodeStr ? parseInt(episodeStr, 10) : undefined;
 
-    if (extra?.search) {
-      const metas = await provider.search(extra.search);
-      return { metas: metas.filter((m) => m.type === type) };
+    const info = await tmdb.findByImdbId(imdbId, type);
+    if (!info || !info.title) {
+      console.error('tmdb: sin resultado para', imdbId, type);
+      return { streams: [] };
     }
-    const skip = extra?.skip ? parseInt(extra.skip, 10) : 0;
-    const metas = await provider.getCatalog(entry.remoteId, skip);
-    return { metas: metas.filter((m) => m.type === type) };
-  } catch (err) {
-    console.error('catalog error', err);
-    return { metas: [] };
-  }
-});
+    console.log('tmdb ->', imdbId, '=>', info.title, info.year);
 
-builder.defineMetaHandler(async ({ id }) => {
-  try {
-    const provider = providerForId(id);
-    if (!provider) return { meta: null };
-    const meta = await provider.getMeta(id);
-    const { _url, ...clean } = meta;
-    return { meta: clean };
-  } catch (err) {
-    console.error('meta error', err);
-    return { meta: null };
-  }
-});
+    const results = await Promise.allSettled(
+      PROVIDERS.map((provider) =>
+        provider.getStreamsByTitle(info.title, { type, season, episode })
+      )
+    );
 
-builder.defineStreamHandler(async ({ id }) => {
-  try {
-    const provider = providerForId(id);
-    if (!provider) return { streams: [] };
-    const streams = await provider.getStreams(id);
+    let streams = [];
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        streams = streams.concat(r.value);
+      } else {
+        console.error(`provider ${PROVIDERS[i].PREFIX} falló:`, r.reason?.message || r.reason);
+      }
+    });
+
+    // Todos los streams se reenvían a través de nuestro propio proxy en vez
+    // del link directo del host, para que el Referer sea el correcto y no
+    // devuelvan 403 (motivo más probable de "no carga nada").
+    streams = streams.map((s) => ({
+      name: s.name,
+      title: s.title,
+      url: buildProxyUrl(s.url, s.referer),
+      behaviorHints: s.behaviorHints,
+    }));
+
     return { streams };
   } catch (err) {
     console.error('stream error', err);
@@ -85,6 +71,17 @@ builder.defineStreamHandler(async ({ id }) => {
   }
 });
 
+const app = express();
+app.use(getRouter(builder.getInterface()));
+app.get('/proxy', proxyHandler);
+
 const PORT = process.env.PORT || 7000;
-serveHTTP(builder.getInterface(), { port: PORT });
-console.log(`Addon corriendo en http://127.0.0.1:${PORT}/manifest.json`);
+app.listen(PORT, () => {
+  const base = process.env.PUBLIC_URL || `http://127.0.0.1:${PORT}`;
+  console.log(`Addon corriendo en ${base}/manifest.json`);
+  if (!process.env.PUBLIC_URL) {
+    console.warn(
+      'AVISO: no está seteada la variable PUBLIC_URL. En Railway hay que configurarla con la URL pública del servicio (ej. https://tu-proyecto.up.railway.app), si no el proxy arma links con 127.0.0.1 y no van a funcionar.'
+    );
+  }
+});
