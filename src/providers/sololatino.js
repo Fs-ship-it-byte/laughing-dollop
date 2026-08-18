@@ -127,6 +127,8 @@ async function loadStreamSources(pageUrl) {
     .get()
     .filter(Boolean);
 
+  console.log(`[sololatino] ${pageUrl} -> ${tokens.length} botones de servidor (csrf: ${csrf ? 'sí' : 'NO'})`);
+
   const results = await Promise.allSettled(
     tokens.map(async (token) => {
       const res = await fetch(`${MAIN_URL}/api/player-url`, {
@@ -140,17 +142,22 @@ async function loadStreamSources(pageUrl) {
         body: JSON.stringify({ t: token }),
       });
       const data = await res.json();
-      if (!data?.url) return null;
+      if (!data?.url) {
+        console.log('[sololatino] token sin url en la respuesta de /api/player-url');
+        return null;
+      }
 
       if (data.type === 'mp4') {
-        return [{ name: 'SoloLatino', title: 'Directo MP4', url: data.url }];
+        return [{ name: 'SoloLatino', title: 'Directo MP4', url: data.url, referer: pageUrl }];
       }
       if (data.url.startsWith('https://embed69.org/')) {
         const streams = await loadEmbed69(data.url, pageUrl);
+        console.log(`[sololatino] embed69 -> ${streams.length} streams`);
         return streams.map((s) => ({
           name: 'SoloLatino',
           title: `${s.language} - ${s.type.toUpperCase()}`,
           url: s.url,
+          referer: s.referer,
           behaviorHints: { notWebReady: s.type === 'hls' },
         }));
       }
@@ -168,6 +175,7 @@ async function loadStreamSources(pageUrl) {
             name: 'SoloLatino',
             title: r.value.type.toUpperCase(),
             url: r.value.url,
+            referer: r.value.referer,
             behaviorHints: { notWebReady: r.value.type === 'hls' },
           }));
       }
@@ -175,19 +183,32 @@ async function loadStreamSources(pageUrl) {
       const midHtml = await getHtml(data.url);
       const $$ = cheerio.load(midHtml);
       const iframeSrc = $$('iframe').first().attr('src');
-      if (!iframeSrc) return null;
+      if (!iframeSrc) {
+        console.log(`[sololatino] sin <iframe> en la página intermedia: ${data.url}`);
+        return null;
+      }
       const resolved = await resolveGenericEmbed(fixHostsLinks(iframeSrc), pageUrl);
-      if (!resolved) return null;
+      if (!resolved) {
+        console.log(`[sololatino] no se pudo resolver el embed: ${iframeSrc}`);
+        return null;
+      }
       return [
         {
           name: 'SoloLatino',
           title: resolved.type.toUpperCase(),
           url: resolved.url,
+          referer: resolved.referer,
           behaviorHints: { notWebReady: resolved.type === 'hls' },
         },
       ];
     })
   );
+
+  results.forEach((r) => {
+    if (r.status === 'rejected') {
+      console.log('[sololatino] servidor falló:', r.reason?.message || r.reason);
+    }
+  });
 
   return results
     .filter((r) => r.status === 'fulfilled' && r.value)
@@ -222,6 +243,8 @@ function normalize(str) {
 
 async function findBestMatch(title, wantType) {
   const results = await search(title);
+  console.log(`[sololatino] search("${title}") -> ${results.length} resultados:`,
+    results.slice(0, 5).map((r) => `${r.name} [${r.type}]`));
   const target = normalize(title);
   let best = null;
   let bestScore = -1;
@@ -234,7 +257,9 @@ async function findBestMatch(title, wantType) {
       best = r;
     }
   }
-  return best || results.find((r) => !wantType || r.type === wantType) || null;
+  const chosen = best || results.find((r) => !wantType || r.type === wantType) || null;
+  console.log(`[sololatino] match elegido para "${title}":`, chosen ? chosen.name : 'NINGUNO');
+  return chosen;
 }
 
 async function getStreamsByTitle(title, { type, season, episode } = {}) {
@@ -244,13 +269,21 @@ async function getStreamsByTitle(title, { type, season, episode } = {}) {
 
   if (wantType === 'series' && season && episode) {
     const meta = await getMeta(match.id);
+    console.log(`[sololatino] episodios encontrados: ${meta.videos?.length || 0}`);
     const video = meta.videos?.find((v) => v.season === season && v.episode === episode);
-    if (!video) return [];
-    return loadStreamSources(video._url);
+    if (!video) {
+      console.log(`[sololatino] no se encontró S${season}E${episode}`);
+      return [];
+    }
+    const streams = await loadStreamSources(video._url);
+    console.log(`[sololatino] streams de episodio: ${streams.length}`);
+    return streams;
   }
 
   const pageUrl = fromId(match.id);
-  return loadStreamSources(pageUrl);
+  const streams = await loadStreamSources(pageUrl);
+  console.log(`[sololatino] streams encontrados: ${streams.length}`);
+  return streams;
 }
 
 module.exports = { getCatalog, search, getMeta, getStreams, getStreamsByTitle, PREFIX, CATALOGS };
