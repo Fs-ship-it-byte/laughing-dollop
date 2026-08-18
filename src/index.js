@@ -3,7 +3,13 @@ const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const cuevana = require('./providers/cuevana');
 const sololatino = require('./providers/sololatino');
 const tmdb = require('./tmdb');
-const { buildProxyUrl, proxyHandler } = require('./proxy');
+const {
+  buildProxyPlaylistUrl,
+  buildProxyDirectUrl,
+  handlePlaylistProxy,
+  handleSegmentProxy,
+  handleDirectProxy,
+} = require('./hlsproxy');
 
 const PROVIDERS = [cuevana, sololatino];
 
@@ -13,7 +19,7 @@ const PROVIDERS = [cuevana, sololatino];
 // instalado. No aparece ninguna estantería/catálogo propio en Nuvio/Stremio.
 const manifest = {
   id: 'community.storm.multi',
-  version: '0.3.0',
+  version: '0.4.0',
   name: 'Storm CS3 (Cuevana + SoloLatino)',
   description:
     'Streams en español desde Cuevana y SoloLatino, resueltos vía TMDB a partir del id de IMDb. No trae catálogo propio: úsalo junto con Cinemeta u otro addon de catálogo.',
@@ -54,16 +60,26 @@ builder.defineStreamHandler(async ({ type, id }) => {
       }
     });
 
-    // Todos los streams se reenvían a través de nuestro propio proxy en vez
-    // del link directo del host, para que el Referer sea el correcto y no
-    // devuelvan 403 (motivo más probable de "no carga nada").
-    streams = streams.map((s) => ({
-      name: s.name,
-      title: s.title,
-      url: buildProxyUrl(s.url, s.referer),
-      behaviorHints: s.behaviorHints,
-    }));
+    // Cada stream se reenvía a través de nuestro propio proxy en vez del
+    // link directo del host: HLS (.m3u8) pasa por el proxy que reescribe
+    // TODO el playlist (sub-playlists + cada segmento .ts), porque el token
+    // del CDN está atado al Referer/Origin/IP con que se negoció, y no
+    // alcanza con proxear solo el archivo raíz. Streams mp4 directos pasan
+    // por un proxy simple que solo reenvía el archivo con los headers
+    // correctos.
+    streams = streams
+      .filter((s) => s && s.url)
+      .map((s) => ({
+        name: s.name,
+        title: s.title,
+        url:
+          s.type === 'hls'
+            ? buildProxyPlaylistUrl(s.url, s.headers)
+            : buildProxyDirectUrl(s.url, s.headers),
+        behaviorHints: s.behaviorHints,
+      }));
 
+    console.log(`total streams devueltos: ${streams.length}`);
     return { streams };
   } catch (err) {
     console.error('stream error', err);
@@ -73,7 +89,10 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
 const app = express();
 app.use(getRouter(builder.getInterface()));
-app.get('/proxy', proxyHandler);
+
+app.get('/hlsproxy/playlist/:token/:file', handlePlaylistProxy);
+app.get('/hlsproxy/segment/:token/:file', handleSegmentProxy);
+app.get('/hlsproxy/direct/:token/:file', handleDirectProxy);
 
 const PORT = process.env.PORT || 7000;
 app.listen(PORT, () => {
