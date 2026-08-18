@@ -151,6 +151,11 @@ async function loadStreamSources(pageUrl) {
       });
   });
 
+  console.log(`[cuevana] ${pageUrl} -> ${jobs.length} servidores encontrados en la página`);
+  if (jobs.length === 0) {
+    console.log('[cuevana] li.open_submenu / li.clili no matchearon nada — probable cambio de HTML');
+  }
+
   const results = await Promise.allSettled(
     jobs.map(async ({ language, iframe }) => {
       const embedHtml = await getHtml(iframe);
@@ -162,19 +167,32 @@ async function loadStreamSources(pageUrl) {
           sourceUrl = content.split("var url = '")[1]?.split("';")[0];
         }
       });
-      if (!sourceUrl) return null;
+      if (!sourceUrl) {
+        console.log(`[cuevana] iframe ${iframe} -> no se encontró "var url ="`);
+        return null;
+      }
 
       const resolved = await resolveGenericEmbed(sourceUrl, MAIN_URL);
-      if (!resolved) return null;
+      if (!resolved) {
+        console.log(`[cuevana] no se pudo resolver el embed: ${sourceUrl}`);
+        return null;
+      }
 
       return {
         name: `Cuevana`,
         title: `${language} - ${resolved.type.toUpperCase()}`,
         url: resolved.url,
+        referer: resolved.referer,
         behaviorHints: { notWebReady: resolved.type === 'hls' },
       };
     })
   );
+
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      console.log(`[cuevana] job ${jobs[i]?.iframe} falló:`, r.reason?.message || r.reason);
+    }
+  });
 
   return results
     .filter((r) => r.status === 'fulfilled' && r.value)
@@ -211,6 +229,8 @@ function normalize(str) {
 
 async function findBestMatch(title, wantType) {
   const results = await search(title);
+  console.log(`[cuevana] search("${title}") -> ${results.length} resultados:`,
+    results.slice(0, 5).map((r) => `${r.name} [${r.type}]`));
   const target = normalize(title);
   let best = null;
   let bestScore = -1;
@@ -223,7 +243,9 @@ async function findBestMatch(title, wantType) {
       best = r;
     }
   }
-  return best || results.find((r) => !wantType || r.type === wantType) || null;
+  const chosen = best || results.find((r) => !wantType || r.type === wantType) || null;
+  console.log(`[cuevana] match elegido para "${title}":`, chosen ? chosen.name : 'NINGUNO');
+  return chosen;
 }
 
 /**
@@ -238,13 +260,21 @@ async function getStreamsByTitle(title, { type, season, episode } = {}) {
 
   if (wantType === 'series' && season && episode) {
     const meta = await getMeta(match.id);
+    console.log(`[cuevana] episodios encontrados: ${meta.videos?.length || 0}`);
     const video = meta.videos?.find((v) => v.season === season && v.episode === episode);
-    if (!video) return [];
-    return loadStreamSources(video._url);
+    if (!video) {
+      console.log(`[cuevana] no se encontró S${season}E${episode}`);
+      return [];
+    }
+    const streams = await loadStreamSources(video._url);
+    console.log(`[cuevana] streams de episodio: ${streams.length}`);
+    return streams;
   }
 
   const pageUrl = fromId(match.id);
-  return loadStreamSources(pageUrl);
+  const streams = await loadStreamSources(pageUrl);
+  console.log(`[cuevana] streams encontrados: ${streams.length}`);
+  return streams;
 }
 
 module.exports = { getCatalog, search, getMeta, getStreams, getStreamsByTitle, PREFIX, CATALOGS };
