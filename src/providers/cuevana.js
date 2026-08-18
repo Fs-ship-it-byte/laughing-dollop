@@ -182,7 +182,8 @@ async function loadStreamSources(pageUrl) {
         name: `Cuevana`,
         title: `${language} - ${resolved.type.toUpperCase()}`,
         url: resolved.url,
-        referer: resolved.referer,
+        type: resolved.type,
+        headers: resolved.headers,
         behaviorHints: { notWebReady: resolved.type === 'hls' },
       };
     })
