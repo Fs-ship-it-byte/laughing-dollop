@@ -1,50 +1,55 @@
-// Desempaquetador para el formato "eval(function(p,a,c,k,e,d){...})('...',a,c,'...'.split('|'),0,{})"
-// muy usado por streamwish/filemoon/vidhidepro y derivados.
+const { getHtml } = require('../http');
+const { isPacked, unpack } = require('./unpacker');
 
-function unbaser(base) {
-  const ALPHABET = {
-    62: '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
-    95: ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~',
-  };
-  let dictionary = {};
-  if (base in ALPHABET) {
-    Array.from(ALPHABET[base]).forEach((c, i) => (dictionary[c] = i));
-  } else {
-    Array.from(ALPHABET[95].slice(0, base)).forEach((c, i) => (dictionary[c] = i));
+// Mismos reemplazos que fixHostsLinks() en el CuevanaProvider original de CS3.
+function fixHostsLinks(url) {
+  return url
+    .replace('https://hglink.to', 'https://streamwish.to')
+    .replace('https://swdyu.com', 'https://streamwish.to')
+    .replace('https://cybervynx.com', 'https://streamwish.to')
+    .replace('https://dumbalag.com', 'https://streamwish.to')
+    .replace('https://mivalyo.com', 'https://vidhidepro.com')
+    .replace('https://dinisglows.com', 'https://vidhidepro.com')
+    .replace('https://dhtpre.com', 'https://vidhidepro.com')
+    .replace('https://filemoon.link', 'https://filemoon.sx')
+    .replace('https://sblona.com', 'https://watchsb.com')
+    .replace('https://lulu.st', 'https://lulustream.com')
+    .replace('https://uqload.io', 'https://uqload.com')
+    .replace('https://do7go.com', 'https://dood.la');
+}
+
+const FILE_REGEX = /(?:file|source)\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i;
+const SOURCES_ARRAY_REGEX = /sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']/i;
+
+/**
+ * Intenta resolver un embed genérico (streamwish/vidhidepro/filemoon/etc)
+ * a un link directo reproducible. Cubre los casos comunes basados en
+ * JS "packeado" (eval/p,a,c,k,e,d) + variable jwplayer "sources"/"file".
+ * No cubre hosts con protección extra (captcha, DRM, tokens firmados por JS complejo).
+ */
+async function resolveGenericEmbed(rawUrl, referer) {
+  const url = fixHostsLinks(rawUrl);
+  const html = await getHtml(url, { headers: { Referer: referer || url } });
+
+  let workingHtml = html;
+  if (isPacked(html)) {
+    const unpacked = unpack(html);
+    if (unpacked) workingHtml = unpacked + '\n' + html;
   }
-  return (value) => {
-    let ret = 0;
-    Array.from(String(value)).reverse().forEach((c, i) => {
-      ret += Math.pow(base, i) * (dictionary[c] || 0);
-    });
-    return ret;
+
+  const m =
+    workingHtml.match(FILE_REGEX) || workingHtml.match(SOURCES_ARRAY_REGEX);
+  if (!m) return null;
+
+  const fileUrl = m[1].replace(/\\\//g, '/');
+  const isM3u8 = fileUrl.includes('.m3u8');
+
+  return {
+    url: fileUrl,
+    quality: 'auto',
+    type: isM3u8 ? 'hls' : 'mp4',
+    referer: url,
   };
 }
 
-function isPacked(html) {
-  return /eval\(function\(p,a,c,k,e,[dr]\)/.test(html);
-}
-
-function unpack(html) {
-  const match = html.match(
-    /eval\(function\(p,a,c,k,e,[dr]\).*?\}\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*)'\.split\('\|'\)/s
-  );
-  if (!match) return null;
-  let [, p, a, c, k] = match;
-  a = parseInt(a, 10);
-  c = parseInt(c, 10);
-  const keywords = k.split('|');
-  const base = unbaser(a);
-
-  let count = c;
-  const dict = {};
-  while (count--) {
-    const word = keywords[count] || count.toString(a);
-    dict[base(count.toString(a))] = word || count.toString(a);
-  }
-  // Reconstruye reemplazando cada token \w+ por su palabra si existe en el diccionario.
-  const decoded = p.replace(/\b\w+\b/g, (word) => dict[word] || word);
-  return decoded.replace(/\\'/g, "'").replace(/\\\\/g, '\\');
-}
-
-module.exports = { isPacked, unpack };
+module.exports = { resolveGenericEmbed, fixHostsLinks };
