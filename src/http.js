@@ -1,20 +1,37 @@
 const fetch = require('node-fetch');
+const { CookieJar } = require('tough-cookie');
+const fetchCookieFactory = require('fetch-cookie');
+
+// Jar compartido: persiste cookies de sesión entre peticiones (necesario porque
+// varios sitios ahora validan el CSRF/sesión y devuelven una página de
+// verificación (HTML) en vez del JSON esperado si no llega la cookie correcta).
+const jar = new CookieJar();
+const fetchWithCookies = fetchCookieFactory(fetch, jar);
 
 const DEFAULT_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
 };
 
 async function getHtml(url, opts = {}) {
-  const res = await fetch(url, {
+  const res = await fetchWithCookies(url, {
     headers: { ...DEFAULT_HEADERS, ...(opts.headers || {}) },
     ...opts,
   });
   if (!res.ok) {
-    throw new Error(`GET ${url} -> HTTP ${res.status}`);
+    let snippet = '';
+    try {
+      snippet = (await res.text()).slice(0, 200).replace(/\s+/g, ' ');
+    } catch (e) {
+      /* ignore */
+    }
+    const err = new Error(`GET ${url} -> HTTP ${res.status}${snippet ? ` | body: ${snippet}` : ''}`);
+    err.status = res.status;
+    throw err;
   }
   return res.text();
 }
 
-module.exports = { getHtml, DEFAULT_HEADERS };
+module.exports = { getHtml, DEFAULT_HEADERS, fetchWithCookies, jar };
