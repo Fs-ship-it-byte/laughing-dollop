@@ -170,7 +170,10 @@ async function loadStreamSources(pageUrl) {
         return null;
       }
       if (!data?.url) {
-        console.log('[sololatino] token sin url en la respuesta de /api/player-url');
+        console.log(
+          '[sololatino] token sin url en la respuesta de /api/player-url. Cuerpo:',
+          rawBody.slice(0, 500)
+        );
         return null;
       }
 
