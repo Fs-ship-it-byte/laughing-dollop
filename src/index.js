@@ -60,24 +60,41 @@ builder.defineStreamHandler(async ({ type, id }) => {
       }
     });
 
-    // Cada stream se reenvía a través de nuestro propio proxy en vez del
-    // link directo del host: HLS (.m3u8) pasa por el proxy que reescribe
-    // TODO el playlist (sub-playlists + cada segmento .ts), porque el token
-    // del CDN está atado al Referer/Origin/IP con que se negoció, y no
-    // alcanza con proxear solo el archivo raíz. Streams mp4 directos pasan
-    // por un proxy simple que solo reenvía el archivo con los headers
-    // correctos.
+    // Entrega directa: le pasamos a Stremio la URL real del CDN y los headers
+    // (Referer/Origin/User-Agent) van en behaviorHints.proxyHeaders. Es la app
+    // de Stremio (desktop/mobile) la que agrega esos headers al pedir el
+    // video directo del CDN, así el video nunca pasa por nuestro servidor.
+    //
+    // OJO: esto no funciona en el player web (web.stremio.com) porque un
+    // <video> de navegador no puede mandar headers custom. Para esos casos
+    // dejamos el proxy como fallback vía USE_PROXY=1 (ver abajo).
+    const USE_PROXY = process.env.USE_PROXY === '1';
+
     streams = streams
       .filter((s) => s && s.url)
-      .map((s) => ({
-        name: s.name,
-        title: s.title,
-        url:
-          s.type === 'hls'
-            ? buildProxyPlaylistUrl(s.url, s.headers)
-            : buildProxyDirectUrl(s.url, s.headers),
-        behaviorHints: s.behaviorHints,
-      }));
+      .map((s) => {
+        if (USE_PROXY) {
+          return {
+            name: s.name,
+            title: s.title,
+            url:
+              s.type === 'hls'
+                ? buildProxyPlaylistUrl(s.url, s.headers)
+                : buildProxyDirectUrl(s.url, s.headers),
+            behaviorHints: s.behaviorHints,
+          };
+        }
+        return {
+          name: s.name,
+          title: s.title,
+          url: s.url,
+          behaviorHints: {
+            ...s.behaviorHints,
+            notWebReady: true,
+            proxyHeaders: s.headers ? { request: s.headers } : undefined,
+          },
+        };
+      });
 
     console.log(`total streams devueltos: ${streams.length}`);
     return { streams };
