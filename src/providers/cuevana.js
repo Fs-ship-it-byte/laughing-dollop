@@ -278,4 +278,13 @@ async function getStreamsByTitle(title, { type, season, episode } = {}) {
   return streams;
 }
 
-module.exports = { getCatalog, search, getMeta, getStreams, getStreamsByTitle, PREFIX, CATALOGS };
+module.exports = {
+  getCatalog,
+  search,
+  getMeta,
+  getStreams,
+  getStreamsByTitle,
+  loadStreamSources,
+  PREFIX,
+  CATALOGS,
+};
