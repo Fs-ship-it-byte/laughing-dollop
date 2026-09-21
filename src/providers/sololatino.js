@@ -1,5 +1,6 @@
 const cheerio = require('cheerio');
-const { getHtml, DEFAULT_HEADERS, fetchWithCookies } = require('../http');
+const fetch = require('node-fetch');
+const { getHtml, DEFAULT_HEADERS } = require('../http');
 const { resolveGenericEmbed, fixHostsLinks } = require('../extractors/generic');
 const { loadEmbed69 } = require('../extractors/embed69');
 
@@ -49,22 +50,8 @@ async function getCatalog(catalogId, skip = 0) {
     .get();
 }
 
-let warmedUp = false;
-async function warmup() {
-  if (warmedUp) return;
-  try {
-    await getHtml(MAIN_URL);
-    warmedUp = true;
-  } catch (e) {
-    console.log('[sololatino] warmup falló:', e.message);
-  }
-}
-
 async function search(query) {
-  await warmup();
-  const html = await getHtml(`${MAIN_URL}/buscar?q=${encodeURIComponent(query)}`, {
-    headers: { Referer: `${MAIN_URL}/` },
-  });
+  const html = await getHtml(`${MAIN_URL}/buscar?q=${encodeURIComponent(query)}`);
   const $ = cheerio.load(html);
   return $('div.card')
     .map((_, el) => parseCard($, el))
@@ -144,36 +131,19 @@ async function loadStreamSources(pageUrl) {
 
   const results = await Promise.allSettled(
     tokens.map(async (token) => {
-      const res = await fetchWithCookies(`${MAIN_URL}/api/player-url`, {
+      const res = await fetch(`${MAIN_URL}/api/player-url`, {
         method: 'POST',
         headers: {
           ...DEFAULT_HEADERS,
           'Content-Type': 'application/json',
           'X-CSRF-TOKEN': csrf,
-          'X-Requested-With': 'XMLHttpRequest',
           Accept: 'application/json',
-          Referer: pageUrl,
-          Origin: MAIN_URL,
         },
         body: JSON.stringify({ t: token }),
       });
-
-      const rawBody = await res.text();
-      let data;
-      try {
-        data = JSON.parse(rawBody);
-      } catch (e) {
-        console.log(
-          `[sololatino] /api/player-url no devolvió JSON (status ${res.status}). Primeros 200 chars:`,
-          rawBody.slice(0, 200).replace(/\s+/g, ' ')
-        );
-        return null;
-      }
+      const data = await res.json();
       if (!data?.url) {
-        console.log(
-          '[sololatino] token sin url en la respuesta de /api/player-url. Cuerpo:',
-          rawBody.slice(0, 500)
-        );
+        console.log('[sololatino] token sin url en la respuesta de /api/player-url');
         return null;
       }
 
@@ -327,4 +297,13 @@ async function getStreamsByTitle(title, { type, season, episode } = {}) {
   return streams;
 }
 
-module.exports = { getCatalog, search, getMeta, getStreams, getStreamsByTitle, PREFIX, CATALOGS };
+module.exports = {
+  getCatalog,
+  search,
+  getMeta,
+  getStreams,
+  getStreamsByTitle,
+  loadStreamSources,
+  PREFIX,
+  CATALOGS,
+};
