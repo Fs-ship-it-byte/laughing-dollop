@@ -111,6 +111,52 @@ app.get('/hlsproxy/playlist/:token/:file', handlePlaylistProxy);
 app.get('/hlsproxy/segment/:token/:file', handleSegmentProxy);
 app.get('/hlsproxy/direct/:token/:file', handleDirectProxy);
 
+// ==========================================
+// RUTAS DE DEBUG (para probar desde el navegador, sin instalar nada)
+// ==========================================
+// /debug/sololatino?url=<URL de la página del episodio/película en
+//   sololatino.net, tal cual, SIN codificar>
+// /debug/cuevana?url=<URL de la página en cuevana>
+// /debug/embed?url=<URL del embed a resolver>&referer=<referer opcional>
+//
+// Devuelven el JSON crudo con lo que resolvió cada provider (url, type,
+// headers) para ver exactamente qué le está llegando a Stremio, sin tener
+// que instalar el addon ni mirar logs.
+const { resolveGenericEmbed } = require('./extractors/generic');
+
+app.get('/debug/sololatino', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'falta ?url=' });
+  try {
+    const streams = await sololatino.loadStreamSources(url);
+    res.json({ pageUrl: url, count: streams.length, streams });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/debug/cuevana', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'falta ?url=' });
+  try {
+    const streams = await cuevana.loadStreamSources(url);
+    res.json({ pageUrl: url, count: streams.length, streams });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/debug/embed', async (req, res) => {
+  const { url, referer } = req.query;
+  if (!url) return res.status(400).json({ error: 'falta ?url=' });
+  try {
+    const resolved = await resolveGenericEmbed(url, referer);
+    res.json({ embedUrl: url, resolved });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 7000;
 app.listen(PORT, () => {
   const base = process.env.PUBLIC_URL || `http://127.0.0.1:${PORT}`;
