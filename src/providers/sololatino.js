@@ -4,7 +4,7 @@ const { getHtml, DEFAULT_HEADERS } = require('../http');
 const { resolveGenericEmbed, fixHostsLinks } = require('../extractors/generic');
 const { loadEmbed69 } = require('../extractors/embed69');
 
-const MAIN_URL = 'https://sololatino.net'; // revisar si cambia el dominio
+const MAIN_URL = 'https://sololatino.co'; // revisar si cambia el dominio
 const PREFIX = 'sololatino';
 
 function toId(href) {
