@@ -20,10 +20,10 @@ function publicUrl() {
   );
 }
 
-function encodeProxyToken(url, headers, light) {
-  const payload = { url, headers: headers || {} };
-  if (light) payload.light = true; // solo cuando aplica: los tokens normales no cambian
-  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+function encodeProxyToken(url, headers) {
+  return Buffer.from(JSON.stringify({ url, headers: headers || {} }), 'utf8').toString(
+    'base64url'
+  );
 }
 
 function decodeProxyToken(token) {
@@ -48,10 +48,8 @@ function makeAbsolute(url, base) {
   return `${base}/${url}`;
 }
 
-// StreamWish nombra sus playlists .txt (master.txt, index-f1-v1-a1.txt) y sus
-// segmentos .woff2: las .txt se tratan igual que las .m3u8.
 function isM3u8Url(u) {
-  return /\.(m3u8|txt)(\?|#|$)/i.test(u);
+  return /\.m3u8(\?|#|$)/i.test(u);
 }
 
 /**
@@ -59,8 +57,8 @@ function isM3u8Url(u) {
  * vez del link directo del CDN. `headers` normalmente trae Referer/Origin/
  * User-Agent, los que hagan falta para que el CDN acepte el request.
  */
-function buildProxyPlaylistUrl(targetUrl, headers, opts = {}) {
-  const token = encodeProxyToken(targetUrl, headers, opts.light);
+function buildProxyPlaylistUrl(targetUrl, headers) {
+  const token = encodeProxyToken(targetUrl, headers);
   return `${publicUrl()}/hlsproxy/playlist/${token}/master.m3u8`;
 }
 
@@ -77,12 +75,7 @@ function buildProxyDirectUrl(targetUrl, headers) {
 // (algunos CDNs nombran sus sub-playlists distinto), sino por la etiqueta
 // que las precede: #EXT-X-STREAM-INF siempre indica que la línea siguiente
 // es una sub-playlist.
-//
-// `light` (proxy liviano, ver buildProxyPlaylistUrl): solo las playlists pasan
-// por acá; los segmentos van DIRECTO al CDN y los headers los manda el cliente
-// (behaviorHints.proxyHeaders). Se usa para los masters .txt de StreamWish, cuya
-// URL cruda el player no reconoce como HLS. Sin `light` todo pasa por el proxy.
-function rewriteM3u8(playlistText, baseUrl, headers, light) {
+function rewriteM3u8(playlistText, baseUrl, headers) {
   const lines = playlistText.split(/\r?\n/);
   let nextIsPlaylist = false;
   const base = baseUrl.replace(/\/[^/]*$/, '');
@@ -97,7 +90,7 @@ function rewriteM3u8(playlistText, baseUrl, headers, light) {
       if (upper.startsWith('#EXT-X-I-FRAME-STREAM-INF')) {
         return line.replace(/URI="([^"]+)"/i, (m, uri) => {
           const abs = makeAbsolute(uri, base);
-          const token = encodeProxyToken(abs, headers, light);
+          const token = encodeProxyToken(abs, headers);
           return `URI="${publicUrl()}/hlsproxy/playlist/${token}/sub.m3u8"`;
         });
       }
@@ -113,15 +106,12 @@ function rewriteM3u8(playlistText, baseUrl, headers, light) {
     }
 
     const absUrl = /^https?:\/\//i.test(trimmed) ? trimmed : makeAbsolute(trimmed, base);
+    const token = encodeProxyToken(absUrl, headers);
     const isPlaylist = nextIsPlaylist || isM3u8Url(absUrl);
     nextIsPlaylist = false;
-    if (isPlaylist) {
-      const ptoken = encodeProxyToken(absUrl, headers, light);
-      return `${publicUrl()}/hlsproxy/playlist/${ptoken}/sub.m3u8`;
-    }
-    if (light) return absUrl; // segmento directo al CDN
-    const token = encodeProxyToken(absUrl, headers);
-    return `${publicUrl()}/hlsproxy/segment/${token}/seg`;
+    return isPlaylist
+      ? `${publicUrl()}/hlsproxy/playlist/${token}/sub.m3u8`
+      : `${publicUrl()}/hlsproxy/segment/${token}/seg`;
   });
 
   return out.join('\n');
@@ -140,7 +130,7 @@ async function handlePlaylistProxy(req, res) {
       return res.status(upstream.status).send('No se pudo obtener el playlist');
     }
     const text = await upstream.text();
-    const rewritten = rewriteM3u8(text, data.url, data.headers, data.light);
+    const rewritten = rewriteM3u8(text, data.url, data.headers);
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Content-Type', 'application/vnd.apple.mpegurl');
     res.send(rewritten);

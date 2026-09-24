@@ -34,22 +34,4 @@ async function getHtml(url, opts = {}) {
   return res.text();
 }
 
-// Igual que getHtml pero devuelve también la URL FINAL (después de seguir las
-// redirecciones HTTP). Hace falta para saber en qué dominio quedó realmente el
-// player (p.ej. streamwish.to -> vibuxer.com): de ahí salen el Referer/Origin
-// que el CDN espera.
-async function getHtmlWithUrl(url, opts = {}) {
-  const res = await fetchWithCookies(url, {
-    headers: { ...DEFAULT_HEADERS, ...(opts.headers || {}) },
-    ...opts,
-  });
-  if (!res.ok) {
-    const err = new Error(`GET ${url} -> HTTP ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
-  const html = await res.text();
-  return { html, url: res.url || url };
-}
-
-module.exports = { getHtml, getHtmlWithUrl, DEFAULT_HEADERS, fetchWithCookies, jar };
+module.exports = { getHtml, DEFAULT_HEADERS, fetchWithCookies, jar };
