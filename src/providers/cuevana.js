@@ -1,6 +1,7 @@
 const cheerio = require('cheerio');
 const { getHtml } = require('../http');
 const { resolveGenericEmbed } = require('../extractors/generic');
+const { resolveEmbedAdvanced } = require('../extractors/streamhosts');
 
 const MAIN_URL = 'https://wv3.cuevana3.eu'; // el dominio de Cuevana cambia seguido, revisar si deja de responder
 const PREFIX = 'cuevana';
@@ -172,7 +173,12 @@ async function loadStreamSources(pageUrl) {
         return null;
       }
 
-      const resolved = await resolveGenericEmbed(sourceUrl, MAIN_URL);
+      // StreamWish / VidHide (y espejos): resolver avanzado (preferencia hls4 > hls3 >
+      // hls2, headers como el navegador, respaldo con Chromium). Si no es de esas
+      // familias o no resuelve, se cae al resolver genérico de siempre, así que
+      // los servidores HLS que ya funcionaban siguen igual.
+      let resolved = await resolveEmbedAdvanced(sourceUrl, MAIN_URL);
+      if (!resolved) resolved = await resolveGenericEmbed(sourceUrl, MAIN_URL);
       if (!resolved) {
         console.log(`[cuevana] no se pudo resolver el embed: ${sourceUrl}`);
         return null;
@@ -180,10 +186,11 @@ async function loadStreamSources(pageUrl) {
 
       return {
         name: `Cuevana`,
-        title: `${language} - ${resolved.type.toUpperCase()}`,
+        title: `${language} - ${resolved.label ? `${resolved.label} ` : ''}${resolved.type.toUpperCase()}`,
         url: resolved.url,
         type: resolved.type,
         headers: resolved.headers,
+        lightProxy: !!resolved.lightProxy,
         behaviorHints: { notWebReady: resolved.type === 'hls' },
       };
     })
