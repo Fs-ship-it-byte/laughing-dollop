@@ -182,4 +182,4 @@ async function resolveMutantHls(embedUrl) {
   return null;
 }
 
-module.exports = { resolveMutantHls, extractHlsFromPlayerCode, unpackEvalBlocks };
+module.exports = { resolveMutantHls, extractHlsFromPlayerCode, unpackEvalBlocks, findMutantRedirect, makeAbsoluteVh };
