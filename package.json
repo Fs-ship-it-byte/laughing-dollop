@@ -1,6 +1,6 @@
 {
   "name": "storm-cuevana-stremio-addon",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Addon de Stremio/Nuvio portado desde el provider Cuevana de CloudStream (storm-ext)",
   "main": "src/index.js",
   "scripts": {
@@ -16,5 +16,8 @@
     "express": "^4.19.2",
     "tough-cookie": "^4.1.4",
     "fetch-cookie": "^2.2.0"
+  },
+  "optionalDependencies": {
+    "puppeteer": "^22.15.0"
   }
 }
