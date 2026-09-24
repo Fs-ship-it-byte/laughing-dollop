@@ -19,7 +19,7 @@ const PROVIDERS = [cuevana, sololatino];
 // instalado. No aparece ninguna estantería/catálogo propio en Nuvio/Stremio.
 const manifest = {
   id: 'community.storm.multi',
-  version: '0.4.0',
+  version: '0.5.0',
   name: 'Storm CS3 (Cuevana + SoloLatino)',
   description:
     'Streams en español desde Cuevana y SoloLatino, resueltos vía TMDB a partir del id de IMDb. No trae catálogo propio: úsalo junto con Cinemeta u otro addon de catálogo.',
@@ -73,6 +73,21 @@ builder.defineStreamHandler(async ({ type, id }) => {
     streams = streams
       .filter((s) => s && s.url)
       .map((s) => {
+        // Masters .txt (StreamWish): la URL cruda no termina en .m3u8 y el player
+        // no la reconoce como HLS, así que la playlist pasa por el proxy liviano
+        // (segmentos directos al CDN, con proxyHeaders del cliente).
+        if (!USE_PROXY && s.lightProxy) {
+          return {
+            name: s.name,
+            title: s.title,
+            url: buildProxyPlaylistUrl(s.url, s.headers, { light: true }),
+            behaviorHints: {
+              ...s.behaviorHints,
+              notWebReady: true,
+              proxyHeaders: s.headers ? { request: s.headers } : undefined,
+            },
+          };
+        }
         if (USE_PROXY) {
           return {
             name: s.name,
@@ -123,6 +138,7 @@ app.get('/hlsproxy/direct/:token/:file', handleDirectProxy);
 // headers) para ver exactamente qué le está llegando a Stremio, sin tener
 // que instalar el addon ni mirar logs.
 const { resolveGenericEmbed } = require('./extractors/generic');
+const { resolveEmbedAdvanced } = require('./extractors/streamhosts');
 
 app.get('/debug/sololatino', async (req, res) => {
   const { url } = req.query;
@@ -152,6 +168,20 @@ app.get('/debug/embed', async (req, res) => {
   try {
     const resolved = await resolveGenericEmbed(url, referer);
     res.json({ embedUrl: url, resolved });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// /debug/advanced?url=<embed de streamwish/vidhide>&force=http|browser
+// Prueba el resolver avanzado de Cuevana (sin caché) y muestra por qué camino salió.
+app.get('/debug/advanced', async (req, res) => {
+  const { url, force } = req.query;
+  if (!url) return res.status(400).json({ error: 'falta ?url=' });
+  const t0 = Date.now();
+  try {
+    const resolved = await resolveEmbedAdvanced(url, undefined, { force: force || 'all' });
+    res.json({ embedUrl: url, ms: Date.now() - t0, resolved });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
