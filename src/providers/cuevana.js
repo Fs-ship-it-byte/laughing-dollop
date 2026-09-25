@@ -37,11 +37,14 @@ function parseCard($, el) {
   if (href.startsWith('/')) href = `${MAIN_URL}${href}`;
   const img = resolvePoster($(el).find('img').attr('src'));
   const isSeries = href.includes('/serie/');
+  const yearText = $(el).find('span.Year, .Year').first().text().trim();
+  const year = /^\d{4}$/.test(yearText) ? parseInt(yearText, 10) : undefined;
   return {
     id: toId(href),
     type: isSeries ? 'series' : 'movie',
     name: title,
     poster: img,
+    year,
   };
 }
 
@@ -151,11 +154,7 @@ async function loadStreamSources(pageUrl) {
   const jobs = [];
 
   $('li.open_submenu').each((_, submenu) => {
-    const language = $(submenu)
-      .text()
-      .trim()
-      .replace(/^([A-Za-z]) /, '$1_')
-      .split(' ')[0];
+    const language = normalizeLanguageLabel($(submenu).text());
 
     $(submenu)
       .find('li.clili')
@@ -246,6 +245,18 @@ async function getStreams(id) {
   return loadStreamSources(pageUrl);
 }
 
+// El sitio marca el audio latino como "Español" en el menú de servidores; se
+// muestra como "Latino" (que es lo que realmente es), y Castellano/Subtitulado
+// se dejan como están.
+function normalizeLanguageLabel(raw) {
+  const t = (raw || '').toLowerCase();
+  if (t.includes('latino')) return 'Latino';
+  if (t.includes('castellano')) return 'Castellano';
+  if (t.includes('sub')) return 'Subtitulado';
+  if (t.includes('espa')) return 'Latino';
+  return (raw || '').trim().split(/\s+/)[0] || 'Latino';
+}
+
 function normalize(str) {
   return (str || '')
     .toLowerCase()
@@ -255,24 +266,56 @@ function normalize(str) {
     .trim();
 }
 
-async function findBestMatch(title, wantType) {
-  const results = await search(title);
-  console.log(`[cuevana] search("${title}") -> ${results.length} resultados:`,
-    results.slice(0, 5).map((r) => `${r.name} [${r.type}]`));
-  const target = normalize(title);
+// Puntaje por solapamiento de palabras (Jaccard), no por substring: "How to
+// Train Your Dragon" contra "Cazadores de Dragones (Dragon Hunters)" antes
+// daba 0 en ambos sentidos y el código igual se quedaba con ese resultado por
+// ser el primero de la lista (bestScore arrancaba en -1). Ahora un resultado
+// sin relación real no se acepta ("NINGUNO" es mejor que un video equivocado).
+function wordOverlapScore(a, b) {
+  const wa = new Set(a.split(' ').filter((w) => w.length > 1));
+  const wb = new Set(b.split(' ').filter((w) => w.length > 1));
+  if (wa.size === 0 || wb.size === 0) return 0;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter++;
+  const union = new Set([...wa, ...wb]).size;
+  const jaccard = inter / union;
+  const exact = a === b ? 1 : 0;
+  const substr = a.includes(b) || b.includes(a) ? 0.5 : 0;
+  return Math.max(jaccard, substr) + exact * 0.5;
+}
+
+const MIN_MATCH_SCORE = 0.34; // al menos un buen puñado de palabras en común
+
+// El sitio suele indexar todo como "movie" aunque TMDB diga "series" (o al
+// revés), así que el tipo pesa como preferencia, no como filtro obligatorio:
+// antes, pedir "series" cuando el sitio la tenía listada distinto daba
+// "NINGUNO" aunque el resultado correcto estuviera ahí.
+async function findBestMatch(titles, wantType, year) {
+  const queries = [...new Set(titles.filter(Boolean))];
+  const seen = new Map();
+  for (const q of queries) {
+    const results = await search(q);
+    console.log(`[cuevana] search("${q}") -> ${results.length} resultados:`,
+      results.slice(0, 5).map((r) => `${r.name} [${r.type}]`));
+    for (const r of results) if (!seen.has(r.id)) seen.set(r.id, r);
+  }
+
+  const targets = queries.map(normalize);
   let best = null;
   let bestScore = -1;
-  for (const r of results) {
-    if (wantType && r.type !== wantType) continue;
+  for (const r of seen.values()) {
     const n = normalize(r.name);
-    const score = n === target ? 2 : n.includes(target) || target.includes(n) ? 1 : 0;
+    let score = Math.max(...targets.map((t) => wordOverlapScore(t, n)));
+    if (wantType && r.type === wantType) score += 0.2;
+    if (year && r.year && Math.abs(r.year - year) <= 1) score += 0.3;
     if (score > bestScore) {
       bestScore = score;
       best = r;
     }
   }
-  const chosen = best || results.find((r) => !wantType || r.type === wantType) || null;
-  console.log(`[cuevana] match elegido para "${title}":`, chosen ? chosen.name : 'NINGUNO');
+  const chosen = bestScore >= MIN_MATCH_SCORE ? best : null;
+  console.log(`[cuevana] match elegido para "${queries[0]}":`,
+    chosen ? `${chosen.name} (score ${bestScore.toFixed(2)})` : `NINGUNO (mejor score ${bestScore.toFixed(2)})`);
   return chosen;
 }
 
@@ -281,9 +324,11 @@ async function findBestMatch(title, wantType) {
  * (resuelto vía TMDB a partir del id de IMDb) y devuelve los streams,
  * sin que este provider necesite tener su propio catálogo/paginado.
  */
-async function getStreamsByTitle(title, { type, season, episode } = {}) {
+async function getStreamsByTitle(title, { type, season, episode, titleEs, originalTitle, year } = {}) {
   const wantType = type === 'series' ? 'series' : 'movie';
-  const match = await findBestMatch(title, wantType);
+  // Se busca primero en español (lo que de verdad hay en el sitio) y el
+  // título en inglés/original queda de respaldo si TMDB no tiene traducción.
+  const match = await findBestMatch([titleEs, title, originalTitle], wantType, year);
   if (!match) return [];
 
   if (wantType === 'series' && season && episode) {
