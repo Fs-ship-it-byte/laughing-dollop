@@ -40,6 +40,11 @@ async function findByImdbId(imdbId, type) {
     titleEs: titleEs || titleEn,
     originalTitle: result.original_title || result.original_name || '',
     year: (result.release_date || result.first_air_date || '').slice(0, 4) || undefined,
+    // El id numérico de TMDB: Cuevana lo usa como sufijo de slug cuando hay dos
+    // fichas con el mismo nombre (remakes, live-action de una animada, etc.),
+    // ej. "como-entrenar-a-tu-dragon-1087192". Sirve para encontrar la ficha
+    // correcta cuando la búsqueda del sitio no la distingue de la otra.
+    tmdbId: result.id,
   };
 }
 
