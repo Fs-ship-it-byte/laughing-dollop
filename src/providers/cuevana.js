@@ -367,12 +367,54 @@ async function findBestMatch(titles, wantType, year) {
  * (resuelto vía TMDB a partir del id de IMDb) y devuelve los streams,
  * sin que este provider necesite tener su propio catálogo/paginado.
  */
-async function getStreamsByTitle(title, { type, season, episode, titleEs, originalTitle, year } = {}) {
+// Cuando el sitio tiene dos fichas con el MISMO nombre (una animada y su
+// remake live-action, por ejemplo), a la que se agregó después le pone de
+// sufijo el id numérico de TMDB en el slug: "como-entrenar-a-tu-dragon" (la
+// de siempre) vs. "como-entrenar-a-tu-dragon-1087192" (la nueva). El buscador
+// del sitio no siempre devuelve esa segunda ficha, así que si el año de la
+// que se encontró no coincide con el de TMDB, se intenta esa variante
+// directamente antes de rendirse con la que sí devolvió la búsqueda.
+async function tryTmdbIdSlugVariant(match, tmdbId, wantType) {
+  if (!tmdbId) return null;
+  const baseUrl = fromId(match.id);
+  if (baseUrl.endsWith(`-${tmdbId}`)) return null; // ya es la variante específica
+  const altUrl = `${baseUrl}-${tmdbId}`;
+  try {
+    const html = await getHtml(altUrl);
+    const $ = cheerio.load(html);
+    const h1 = $('h1.Title').text().trim();
+    if (!h1) return null;
+    const yearMatch = $('footer p.meta').html()?.match(/<span>(\d+)<\/span>/);
+    const altYear = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
+    const isSeries = altUrl.includes('/serie/');
+    if (wantType && (isSeries ? 'series' : 'movie') !== wantType) return null;
+    return { id: toId(altUrl), name: h1, type: isSeries ? 'series' : 'movie', year: altYear };
+  } catch (e) {
+    return null; // la variante no existe: la ficha encontrada por búsqueda es la única
+  }
+}
+
+async function getStreamsByTitle(title, { type, season, episode, titleEs, originalTitle, year, tmdbId } = {}) {
   const wantType = type === 'series' ? 'series' : 'movie';
   // Se busca primero en español (lo que de verdad hay en el sitio) y el
   // título en inglés/original queda de respaldo si TMDB no tiene traducción.
-  const match = await findBestMatch([titleEs, title, originalTitle], wantType, year);
+  let match = await findBestMatch([titleEs, title, originalTitle], wantType, year);
   if (!match) return [];
+
+  if (year) {
+    let realYear = match.year;
+    if (realYear === undefined) {
+      try { realYear = (await getMeta(match.id)).year; } catch (e) { /* se sigue con lo que hay */ }
+    }
+    if (realYear === undefined || Math.abs(realYear - year) > 1) {
+      const variant = await tryTmdbIdSlugVariant(match, tmdbId, wantType);
+      if (variant && (variant.year === undefined || Math.abs(variant.year - year) <= 1)) {
+        console.log(`[cuevana] "${match.name}" (${realYear ?? '?'}) no coincide con el año de TMDB (${year}); ` +
+          `usando la variante con id de TMDB: "${variant.name}" (${variant.year ?? '?'})`);
+        match = variant;
+      }
+    }
+  }
 
   if (wantType === 'series' && season && episode) {
     const meta = await getMeta(match.id);
