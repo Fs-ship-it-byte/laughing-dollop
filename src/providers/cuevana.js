@@ -1,6 +1,7 @@
 const cheerio = require('cheerio');
 const { getHtml } = require('../http');
 const { resolveGenericEmbed } = require('../extractors/generic');
+const { resolveEmbedAdvanced } = require('../extractors/streamhosts');
 
 const MAIN_URL = 'https://wv3.cuevana3.eu'; // el dominio de Cuevana cambia seguido, revisar si deja de responder
 const PREFIX = 'cuevana';
@@ -131,6 +132,19 @@ async function getMeta(id) {
   };
 }
 
+// Un embed que tarda más que esto (típicamente StreamWish esperando a Chromium) no
+// retiene a los demás: se responde con lo que ya está, y la resolución sigue en
+// segundo plano y queda en caché para el próximo pedido (Stremio suele reintentar).
+const EMBED_BUDGET_MS = parseInt(process.env.EMBED_BUDGET_MS || '20000', 10);
+const TIMED_OUT = Symbol('timeout');
+function withBudget(promise, ms) {
+  let t;
+  const timeout = new Promise((resolve) => {
+    t = setTimeout(() => resolve(TIMED_OUT), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
 async function loadStreamSources(pageUrl) {
   const html = await getHtml(pageUrl);
   const $ = cheerio.load(html);
@@ -172,7 +186,19 @@ async function loadStreamSources(pageUrl) {
         return null;
       }
 
-      const resolved = await resolveGenericEmbed(sourceUrl, MAIN_URL);
+      // StreamWish / VidHide (y espejos): resolver avanzado (preferencia hls4 > hls3 >
+      // hls2, headers como el navegador, respaldo con Chromium). Si no es de esas
+      // familias o no resuelve, se cae al resolver genérico de siempre, así que
+      // los servidores HLS que ya funcionaban siguen igual.
+      let resolved = await withBudget(
+        resolveEmbedAdvanced(sourceUrl, MAIN_URL).catch(() => null),
+        EMBED_BUDGET_MS
+      );
+      if (resolved === TIMED_OUT) {
+        console.log(`[cuevana] ${EMBED_BUDGET_MS}ms agotados, sigue en segundo plano (queda en caché): ${sourceUrl}`);
+        return null;
+      }
+      if (!resolved) resolved = await resolveGenericEmbed(sourceUrl, MAIN_URL);
       if (!resolved) {
         console.log(`[cuevana] no se pudo resolver el embed: ${sourceUrl}`);
         return null;
@@ -180,10 +206,11 @@ async function loadStreamSources(pageUrl) {
 
       return {
         name: `Cuevana`,
-        title: `${language} - ${resolved.type.toUpperCase()}`,
+        title: `${language} - ${resolved.label ? `${resolved.label} ` : ''}${resolved.type.toUpperCase()}`,
         url: resolved.url,
         type: resolved.type,
         headers: resolved.headers,
+        lightProxy: !!resolved.lightProxy,
         behaviorHints: { notWebReady: resolved.type === 'hls' },
       };
     })
