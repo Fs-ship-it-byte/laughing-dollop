@@ -21,7 +21,7 @@ const PROVIDERS = [cuevana, sololatino];
 // instalado. No aparece ninguna estantería/catálogo propio en Nuvio/Stremio.
 const manifest = {
   id: 'community.storm.multi',
-  version: '0.5.1',
+  version: '0.5.3',
   name: 'Storm CS3 (Cuevana + SoloLatino)',
   description:
     'Streams en español desde Cuevana y SoloLatino, resueltos vía TMDB a partir del id de IMDb. No trae catálogo propio: úsalo junto con Cinemeta u otro addon de catálogo.',
@@ -49,7 +49,14 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
     const results = await Promise.allSettled(
       PROVIDERS.map((provider) =>
-        provider.getStreamsByTitle(info.title, { type, season, episode })
+        provider.getStreamsByTitle(info.title, {
+          type,
+          season,
+          episode,
+          titleEs: info.titleEs,
+          originalTitle: info.originalTitle,
+          year: info.year,
+        })
       )
     );
 
