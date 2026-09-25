@@ -250,10 +250,12 @@ async function getStreams(id) {
 // se dejan como están.
 function normalizeLanguageLabel(raw) {
   const t = (raw || '').toLowerCase();
+  // En este sitio: "Español Latino" es la pista latina, y "Español" a secas
+  // (sin "Latino") es la de España.
   if (t.includes('latino')) return 'Latino';
   if (t.includes('castellano')) return 'Castellano';
   if (t.includes('sub')) return 'Subtitulado';
-  if (t.includes('espa')) return 'Latino';
+  if (t.includes('espa')) return 'Español (España)';
   return (raw || '').trim().split(/\s+/)[0] || 'Latino';
 }
 
@@ -313,9 +315,50 @@ async function findBestMatch(titles, wantType, year) {
       best = r;
     }
   }
-  const chosen = bestScore >= MIN_MATCH_SCORE ? best : null;
+  if (bestScore < MIN_MATCH_SCORE) {
+    console.log(`[cuevana] match elegido para "${queries[0]}": NINGUNO (mejor score ${bestScore.toFixed(2)})`);
+    return null;
+  }
+
+  // Reediciones/remakes tienen el MISMO título ("Cómo entrenar a tu dragón" 2010
+  // animada vs. 2025 live-action): el nombre no alcanza para diferenciarlas y
+  // ambas empatan en el puntaje de texto. Si hay varias casi empatadas y TMDB
+  // dio un año, se revisa la página real (año verdadero, no el de la búsqueda)
+  // de las 3 mejores para desempatar. Solo se hacen esas 3 llamadas extra
+  // cuando de verdad hay ambigüedad.
+  const scored = [...seen.values()].map((r) => {
+    const n = normalize(r.name);
+    let score = Math.max(...targets.map((t) => wordOverlapScore(t, n)));
+    if (wantType && r.type === wantType) score += 0.2;
+    if (year && r.year && Math.abs(r.year - year) <= 1) score += 0.3;
+    return { r, score };
+  });
+  const contenders = scored
+    .filter((c) => bestScore - c.score <= 0.05)
+    .sort((a, b) => b.score - a.score);
+
+  let chosen = best;
+  if (year && contenders.length > 1) {
+    const withYear = await Promise.all(
+      contenders.slice(0, 3).map(async (c) => {
+        try {
+          const meta = await getMeta(c.r.id);
+          return { ...c, realYear: meta.year };
+        } catch (e) {
+          return { ...c, realYear: undefined };
+        }
+      })
+    );
+    const exactYear = withYear.find((c) => c.realYear === year);
+    if (exactYear) {
+      chosen = exactYear.r;
+      console.log(`[cuevana] desempate por año: entre ${withYear.length} candidatos casi empatados, ` +
+        `"${chosen.name}" (${exactYear.realYear}) coincide con el año de TMDB (${year})`);
+    }
+  }
+
   console.log(`[cuevana] match elegido para "${queries[0]}":`,
-    chosen ? `${chosen.name} (score ${bestScore.toFixed(2)})` : `NINGUNO (mejor score ${bestScore.toFixed(2)})`);
+    `${chosen.name} (score ${bestScore.toFixed(2)})`);
   return chosen;
 }
 
