@@ -2,6 +2,8 @@ const express = require('express');
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const cuevana = require('./providers/cuevana');
 const sololatino = require('./providers/sololatino');
+const gnula = require('./providers/gnula');
+const fuegocine = require('./providers/fuegocine');
 const tmdb = require('./tmdb');
 const {
   publicUrl,
@@ -13,7 +15,7 @@ const {
   handleDirectProxy,
 } = require('./hlsproxy');
 
-const PROVIDERS = [cuevana, sololatino];
+const PROVIDERS = [cuevana, sololatino, gnula, fuegocine];
 
 // Sin catálogo propio: el addon solo resuelve "stream" para ids de IMDb
 // (tt1234567 para películas, tt1234567:temporada:episodio para series) que
@@ -21,10 +23,10 @@ const PROVIDERS = [cuevana, sololatino];
 // instalado. No aparece ninguna estantería/catálogo propio en Nuvio/Stremio.
 const manifest = {
   id: 'community.storm.multi',
-  version: '0.5.6',
-  name: 'Storm CS3 (Cuevana + SoloLatino)',
+  version: '0.6.0',
+  name: 'Storm CS3 (Cuevana + GNULA + FuegoCine + SoloLatino)',
   description:
-    'Streams en español desde Cuevana y SoloLatino, resueltos vía TMDB a partir del id de IMDb. No trae catálogo propio: úsalo junto con Cinemeta u otro addon de catálogo.',
+    'Streams en español desde Cuevana, GNULA, FuegoCine y SoloLatino, resueltos vía TMDB a partir del id de IMDb. No trae catálogo propio: úsalo junto con Cinemeta u otro addon de catálogo.',
   logo: 'https://sololatino.net/favicon.ico',
   resources: ['stream'],
   types: ['movie', 'series'],
