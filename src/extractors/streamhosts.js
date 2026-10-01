@@ -326,7 +326,14 @@ const _inflight = new Map();
 
 async function resolveEmbedAdvanced(rawUrl, fallbackReferer, opts = {}) {
   const url = fixHostsLinks(rawUrl);
-  const family = familyOf(url);
+  // opts.forcedFamily: cuando la fuente YA sabe qué es el embed (p.ej. GNULA
+  // da el "locker" -- vidhide/streamwish -- en su propio HTML) aunque la URL
+  // de entrada sea un envoltorio (player.gnula.life/player.php?h=...) que no
+  // "parece" streamwish/vidhide por su dominio. Sin esto, familyOf(url)
+  // devolvía null para esos envoltorios y ni se intentaba resolver -- pero
+  // resolveViaHttp ya sigue redirects genéricos (findMutantRedirect) hasta
+  // llegar al dominio real, así que alcanza con no cortar acá.
+  const family = opts.forcedFamily || familyOf(url);
   if (!family) return null;
 
   const cached = opts.force ? undefined : cacheGet(url);
