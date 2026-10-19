@@ -3,6 +3,7 @@ const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const cuevana = require('./providers/cuevana');
 const sololatino = require('./providers/sololatino');
 const tmdb = require('./tmdb');
+const { fetchWithCookies, DEFAULT_HEADERS } = require('./http');
 const {
   publicUrl,
   hasPublicUrl,
@@ -195,6 +196,49 @@ app.get('/debug/advanced', async (req, res) => {
     res.json({ embedUrl: url, ms: Date.now() - t0, resolved });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// /debug/embed69?imdb=tt0114709[&season=1&episode=5][&referer=<url>]
+// Hace la MISMA petición que usa sololatino.getStreamsByImdb y devuelve el
+// estado HTTP, los headers de respuesta y el cuerpo completo (sin recortar),
+// para ver el código de error real de Cloudflare (1020, 1010, 1015...).
+app.get('/debug/embed69', async (req, res) => {
+  const { imdb, season, episode, referer } = req.query;
+  if (!imdb) return res.status(400).json({ error: 'falta ?imdb=' });
+  const slug =
+    season && episode ? `${imdb}-${season}x${String(episode).padStart(2, '0')}` : imdb;
+  const url = `https://embed69.org/f/${slug}`;
+  const t0 = Date.now();
+  try {
+    const r = await fetchWithCookies(url, {
+      headers: { ...DEFAULT_HEADERS, Referer: referer || 'https://sololatino.net/' },
+    });
+    const body = await r.text();
+    const headers = {};
+    r.headers.forEach((v, k) => {
+      headers[k] = v;
+    });
+    res.json({
+      url,
+      ms: Date.now() - t0,
+      status: r.status,
+      cloudflare: {
+        server: headers.server || null,
+        cfRay: headers['cf-ray'] || null,
+        mitigated: headers['cf-mitigated'] || null,
+        errorCode: (body.match(/Error code\s*(\d{3,4})/i) || [])[1] || null,
+        titulo: (body.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]?.trim() || null,
+        desafioJs: /just a moment|challenge-platform|cf_chl/i.test(body),
+      },
+      tienePow: /POW_CHALLENGE/.test(body),
+      tieneDataLink: /dataLink\s*=\s*\[/.test(body),
+      headers,
+      bodyLength: body.length,
+      body,
+    });
+  } catch (e) {
+    res.status(500).json({ url, ms: Date.now() - t0, error: e.message });
   }
 });
 
