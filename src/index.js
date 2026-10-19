@@ -57,6 +57,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
           originalTitle: info.originalTitle,
           year: info.year,
           tmdbId: info.tmdbId,
+          imdbId,
         })
       )
     );
