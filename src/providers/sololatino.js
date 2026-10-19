@@ -273,7 +273,32 @@ async function findBestMatch(title, wantType) {
   return chosen;
 }
 
-async function getStreamsByTitle(title, { type, season, episode } = {}) {
+async function getStreamsByImdb(imdbId, { type, season, episode } = {}) {
+  const slug =
+    type === 'series' && season && episode
+      ? `${imdbId}-${season}x${String(episode).padStart(2, '0')}`
+      : imdbId;
+  const streams = await loadEmbed69(`https://embed69.org/f/${slug}`, `${MAIN_URL}/`);
+  console.log(`[sololatino] embed69 directo (${slug}) -> ${streams.length} streams`);
+  return streams.map((s) => ({
+    name: 'SoloLatino',
+    title: `${s.language} - ${s.type.toUpperCase()}`,
+    url: s.url,
+    type: s.type,
+    headers: s.headers,
+    behaviorHints: { notWebReady: s.type === 'hls' },
+  }));
+}
+
+async function getStreamsByTitle(title, { type, season, episode, imdbId } = {}) {
+  if (imdbId) {
+    try {
+      const directos = await getStreamsByImdb(imdbId, { type, season, episode });
+      if (directos.length) return directos;
+    } catch (e) {
+      console.log('[sololatino] embed69 directo falló:', e.message);
+    }
+  }
   const wantType = type === 'series' ? 'series' : 'movie';
   const match = await findBestMatch(title, wantType);
   if (!match) return [];
@@ -303,6 +328,7 @@ module.exports = {
   getMeta,
   getStreams,
   getStreamsByTitle,
+  getStreamsByImdb,
   loadStreamSources,
   PREFIX,
   CATALOGS,
