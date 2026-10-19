@@ -17,8 +17,8 @@ const DEFAULT_HEADERS = {
 
 async function getHtml(url, opts = {}) {
   const res = await fetchWithCookies(url, {
-    headers: { ...DEFAULT_HEADERS, ...(opts.headers || {}) },
     ...opts,
+    headers: { ...DEFAULT_HEADERS, ...(opts.headers || {}) },
   });
   if (!res.ok) {
     let snippet = '';
@@ -40,8 +40,8 @@ async function getHtml(url, opts = {}) {
 // que el CDN espera.
 async function getHtmlWithUrl(url, opts = {}) {
   const res = await fetchWithCookies(url, {
-    headers: { ...DEFAULT_HEADERS, ...(opts.headers || {}) },
     ...opts,
+    headers: { ...DEFAULT_HEADERS, ...(opts.headers || {}) },
   });
   if (!res.ok) {
     const err = new Error(`GET ${url} -> HTTP ${res.status}`);
